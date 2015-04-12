@@ -37,7 +37,7 @@ At the moment only raw tcp connections are supported, not yet websocket.
 
 Peer
 ====
-Erwa implements the basic profile for all four roles of a peer, caller and callee as well as
+Awre implements the basic profile for all four roles of a peer, caller and callee as well as
 publisher and subscriber.
 The connection to the router can either be remote to another host/port or local to a router
 running within the same VM.
@@ -49,49 +49,49 @@ The Idea is to have just one connection to a router and share it with all needin
 To connect to a realm you need to follow a few simple steps:
 ```Erlang
 %% first start a connection
-{ok,Con} = erwa:start_client(),
+{ok,Con} = awre:start_client(),
 %% then connect to either a local or remote router
 %% local would be
-{ok,SessionId,RouterDetails} = erwa:connect(Con,Realm),
+{ok,SessionId,RouterDetails} = awre:connect(Con,Realm),
 %% the following is a remote router
-{ok,SessionId,RouterDetails} = erwa:connect(Con,Host,Port,Realm,Encoding),
+{ok,SessionId,RouterDetails} = awre:connect(Con,Host,Port,Realm,Encoding),
 
 
 %% now the connection 'Con' is connected to the router and handles everything for you
 %% sending an event to a certain topic is just as easy:
 %% the two parameters Arguments and ArgumentsKW are optional.
-ok = erwa:publish(Con,Options,EventTopicUrl,Arguments,ArgumentsKW),
+ok = awre:publish(Con,Options,EventTopicUrl,Arguments,ArgumentsKW),
 
 %% invoking a remote procedure is easy, too:
 %% as with publishing are the Arguments and the ArgumentsKW optional.
 %% ResA and ResAKw may be undefined in case they did not include any data.
-{ok,Details,ResA,ResAKw} = erwa:call(Con,Options,ProcedureUri,Arguments,ArgumentsKW),
+{ok,Details,ResA,ResAKw} = awre:call(Con,Options,ProcedureUri,Arguments,ArgumentsKW),
 
 %% for subscription to a topic or registering a function for remote calls
 %% there exist two different ways:
-%% one is to use a tuple of module, function and one argument that will be called by erwa.
+%% one is to use a tuple of module, function and one argument that will be called by awre.
 %% this is the easiest way, yet has the drawback that you can only forward one argument
 %% to your function and not return any state change or similar.
 %% the following line will invoke Module:Function(Details,Arguments,ArgumentsKW,OneArgument)
 %% on the occurance of an event.
-{ok,SubscriptionId} = erwa:subscribe(Con,Options,EventUrl,{Module,Function,OneArgument}),
+{ok,SubscriptionId} = awre:subscribe(Con,Options,EventUrl,{Module,Function,OneArgument}),
 
 %% the same works for registering a remote procedure.
 %% the function that will be called here is also:
 %% Module:Function(Details,Arguments,ArgumentsKW,OneArgument)
-{ok,RegistrationId} = erwa:register(Con,Options,ProcedureUri,{Module,Function,OneArgument}),
+{ok,RegistrationId} = awre:register(Con,Options,ProcedureUri,{Module,Function,OneArgument}),
 
 
 %% the other possibility is to subscribe or register without giving an mfa.
 %% In this case the process will receive the
-%% {erwa,{event,SubscriptionId,PublicationId,Details,Arguments,ArgumentsKw}}
+%% {awre,{event,SubscriptionId,PublicationId,Details,Arguments,ArgumentsKw}}
 %% message for an event and the
-%% {erwa,{invocation,RequestId,RegistrationId,Details,Arguments,ArgumentsKw}}
+%% {awre,{invocation,RequestId,RegistrationId,Details,Arguments,ArgumentsKw}}
 %% message for an invocation.
-%% you MUST reply to an invocation by using erwa:yield/3,erwa:yield/4 or erwa:yield/5.
+%% you MUST reply to an invocation by using awre:yield/3,awre:yield/4 or awre:yield/5.
 %%
-{ok,SubscriptionId} = erwa:subscribe(Con,Options,EventUri),
-{ok,RegistrationId} = erwa:register(Con,Options,ProcedureUri),
+{ok,SubscriptionId} = awre:subscribe(Con,Options,EventUri),
+{ok,RegistrationId} = awre:register(Con,Options,ProcedureUri),
 ```
 
 The crossbar_client example includes registration and subscriptions using mfa.
