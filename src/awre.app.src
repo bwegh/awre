@@ -30,9 +30,8 @@
   ]},
 	{applications, [
 		kernel,
-		stdlib,
-    erwa_lib
+		stdlib
 	]},
-	{mod, {erwa_app, []}},
+	{mod, {awre_app, []}},
 	{env, []}
 ]}.

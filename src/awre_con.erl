@@ -91,7 +91,7 @@ start_link(Args) ->
 -spec init(Params :: list() ) -> {ok,#state{}}.
 init([]) ->
   Ets = ets:new(con_data,[bag,protected,{keypos,2}]),
-  Version = erwa:get_version(),
+  Version = awre:get_version(),
   {ok,#state{ets=Ets,version=Version}}.
 
 
