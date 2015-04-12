@@ -187,7 +187,7 @@ handle_info({tcp,Socket,<<127,L:4,S:4,0,0>>},#state{socket=Socket,enc=Enc,realm=
   ok = raw_send({hello,Realm,[{agent,Version}|?CLIENT_DETAILS]},State1),
   {noreply,State1};
 handle_info({tcp,Socket,Data},#state{buffer=Buffer,socket=Socket,enc=Enc}=State) ->
-  {Messages,NewBuffer} = erwa_protocol:deserialize(<<Buffer/binary, Data/binary>>,Enc),
+  {Messages,NewBuffer} = wamper_protocol:deserialize(<<Buffer/binary, Data/binary>>,Enc),
   handle_messages(Messages,State),
   {noreply,State#state{buffer=NewBuffer}};
 handle_info(terminate,State) ->
@@ -347,7 +347,7 @@ raw_send(Message,#state{router=R,socket=S,enc=Enc,max_length=MaxLength}=State) -
     local ->
       ok = erwa_router:handle_wamp(R,Message);
     remote ->
-      SerMessage = erwa_protocol:serialize(Message,Enc),
+      SerMessage = wamper_protocol:serialize(Message,Enc),
       case byte_size(SerMessage) > MaxLength of
         true ->
           ok;
