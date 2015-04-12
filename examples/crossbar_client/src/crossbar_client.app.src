@@ -1,0 +1,16 @@
+
+{application, crossbar_client, [
+	{id, "crossbar_client"},
+	{description, "a simple wamp tcp client for crossbar"},
+	{vsn, "0.0.1"},
+	{modules, []},
+	{registered, []},
+	{applications, [
+		kernel,
+    sasl,
+		stdlib,
+    awre
+	]},
+	{mod, {crossbar_client_app, []}},
+	{env, []}
+]}.
