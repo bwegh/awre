@@ -30,7 +30,8 @@
   ]},
 	{applications, [
 		kernel,
-		stdlib
+		stdlib,
+		wamper
 	]},
 	{mod, {awre_app, []}},
 	{env, []}
