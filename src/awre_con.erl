@@ -118,8 +118,8 @@ handle_call({connect,Host,Port,Realm,Encoding},From,#state{ets=Ets,version=Versi
                    raw_msgpack -> 2;
                    _ -> 0
                  end,
-        Byte = (15 bsl 4) bor (SerNum),
-        ok = gen_tcp:send(Socket,<<127,Byte,0,0>>),
+        MaxLen = 15,
+        ok = gen_tcp:send(Socket,<<127,MaxLen:4,SerNum:4,0,0>>),
         {undefined,Socket}
     end,
   State1 = State#state{enc=Enc,router=R,socket=S,realm=Realm},
