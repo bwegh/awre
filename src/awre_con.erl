@@ -38,10 +38,10 @@
 
 -define(DEFAULT_PORT,5555).
 -define(CLIENT_DETAILS, #{
-                          callee => #{},
-                          caller => #{},
-                          publisher => #{},
-                          subscriber => #{}
+                          callee => #{features => #{}},
+                          caller => #{features => #{}},
+                          publisher => #{features => #{}},
+                          subscriber => #{features => #{}}
                           }).
 
 
