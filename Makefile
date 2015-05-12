@@ -1,5 +1,4 @@
 PROJECT = awre
-CT_SUITES = eunit client
 CT_OPTS = -cover test/cover.spec
 ERLC_OPTS = +debug_info
 

@@ -71,7 +71,7 @@ stop_client(ConPid,Details,Reason) ->
 
 -spec stop_client(ConPid :: pid()) -> ok.
 stop_client(ConPid) ->
-  gen_server:cast(ConPid,{shutdown,[{}],close_realm}).
+  gen_server:cast(ConPid,{shutdown,#{},close_realm}).
 
 %% @doc Connect to a router in the VM.
 %% The connection will be established to the local router in the VM.
@@ -176,6 +176,6 @@ yield(ConPid,RequestId,Details,Arguments,ArgumentsKw) ->
 error(ConPid,RequestId,ErrorType,Reason,ErrorUri) ->
   ReasonStr = iolist_to_binary(io_lib:format("~p:~p",[ErrorType,Reason])),
   StackTraceStr = iolist_to_binary(io_lib:format("~p", [erlang:get_stacktrace()])),
-  ArgsKw = [{<<"reason">>,ReasonStr},
-	    {<<"stacktrace">>,StackTraceStr}],
+  ArgsKw = #{<<"reason">> => ReasonStr,
+            <<"stacktrace">> => StackTraceStr},
   gen_server:call(ConPid, {error,invocation,RequestId,ArgsKw,ErrorUri}).

@@ -37,13 +37,12 @@
 
 
 -define(DEFAULT_PORT,5555).
--define(CLIENT_DETAILS,[{roles,[
-                                {callee,[]},
-                                {caller,[]},
-                                {publisher,[]},
-                                {subscriber,[]}
-                                ]}
-                        ]).
+-define(CLIENT_DETAILS, #{
+                          callee => #{},
+                          caller => #{},
+                          publisher => #{},
+                          subscriber => #{}
+                          }).
 
 
 -record(state,{
@@ -108,7 +107,7 @@ handle_call({connect,Host,Port,Realm,Encoding},From,#state{ets=Ets,version=Versi
     case Host of
       undefined ->
         {ok, Router} =  erwa:get_router_for_realm(Realm),
-        ok = raw_send({hello,Realm,[{agent,Version},{erwa,[{source,node},{peer,local}]}]++?CLIENT_DETAILS},State#state{socket=undefined,router=Router}),
+        ok = raw_send({hello,Realm,#{agent => Version, erwa => #{source => node,peer => local},roles => ?CLIENT_DETAILS}},State#state{socket=undefined,router=Router}),
         {Router,undefined};
       _ ->
         {ok, Socket} = gen_tcp:connect(Host,Port,[binary,{packet,0}]),
@@ -127,27 +126,27 @@ handle_call({connect,Host,Port,Realm,Encoding},From,#state{ets=Ets,version=Versi
   {noreply,State1};
 
 handle_call({subscribe,Options,Topic,Mfa},From,State) ->
-  send({subscribe,request_id,Options,Topic},From,[{mfa,Mfa}],State),
+  send({subscribe,request_id,Options,Topic},From,#{mfa => Mfa},State),
   {noreply,State};
 
 handle_call({unsubscribe,SubscriptionId},From,State) ->
-  send({unsubscribe,request_id,SubscriptionId},From,[{sub_id,SubscriptionId}],State),
+  send({unsubscribe,request_id,SubscriptionId},From,#{sub_id=>SubscriptionId},State),
   {noreply,State};
 
 handle_call({publish,Options,Topic,Arguments,ArgumentsKw},From,State) ->
-  send({publish,request_id,Options,Topic,Arguments,ArgumentsKw},From,[],State),
+  send({publish,request_id,Options,Topic,Arguments,ArgumentsKw},From,#{},State),
   {reply,ok,State};
 
 handle_call({register,Options,Procedure,Mfa},From,State) ->
-  send({register,request_id,Options,Procedure},From,[{mfa,Mfa}],State),
+  send({register,request_id,Options,Procedure},From,#{mfa=>Mfa},State),
   {noreply,State};
 
 handle_call({unregister,RegistrationId},From,State) ->
-  send({unregister,request_id,RegistrationId},From,[{reg_id,RegistrationId}],State),
+  send({unregister,request_id,RegistrationId},From,#{reg_id => RegistrationId},State),
   {noreply,State};
 
 handle_call({call,Options,Procedure,Arguments,ArgumentsKw},From,State) ->
-  ok = send({call,request_id,Options,Procedure,Arguments,ArgumentsKw},From,[],State),
+  ok = send({call,request_id,Options,Procedure,Arguments,ArgumentsKw},From,#{},State),
   {noreply,State};
 
 handle_call({yield,_,_,_,_}=Msg,_From,State) ->
@@ -155,7 +154,7 @@ handle_call({yield,_,_,_,_}=Msg,_From,State) ->
   {reply,ok,State};
 
 handle_call({error,invocation,RequestId,ArgsKw,ErrorUri},_From,State) ->
-    ok = raw_send({error,invocation,RequestId,[{}],ErrorUri,[],ArgsKw},State),
+    ok = raw_send({error,invocation,RequestId,#{},ErrorUri,[],ArgsKw},State),
     {reply,ok,State};
 
 handle_call(_Msg,_From,State) ->
@@ -184,7 +183,7 @@ handle_info({tcp,Socket,<<127,L:4,S:4,0,0>>},#state{socket=Socket,enc=Enc,realm=
       _ -> false
     end,
   State1 = State#state{max_length=math:pow(2,9+L)},
-  ok = raw_send({hello,Realm,[{agent,Version}|?CLIENT_DETAILS]},State1),
+  ok = raw_send({hello,Realm,#{agent=>Version, roles => ?CLIENT_DETAILS}},State1),
   {noreply,State1};
 handle_info({tcp,Socket,Data},#state{buffer=Buffer,socket=Socket,enc=Enc}=State) ->
   {Messages,NewBuffer} = wamper_protocol:deserialize(<<Buffer/binary, Data/binary>>,Enc),
@@ -239,7 +238,7 @@ handle_message({goodbye,_Details,_Reason},#state{goodbye_sent=GS}=State) ->
 handle_message({subscribed,RequestId,SubscriptionId},#state{ets=Ets}) ->
   [#ref{method=subscribe,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
   ets:delete(Ets,RequestId),
-  {mfa,Mfa} = lists:keyfind(mfa,1,Args),
+  Mfa = maps:get(mfa,Args),
   {Pid,_} = From,
   ets:insert_new(Ets,#subscription{id=SubscriptionId,mfa=Mfa,pid=Pid}),
   gen_server:reply(From,{ok,SubscriptionId});
@@ -247,7 +246,7 @@ handle_message({subscribed,RequestId,SubscriptionId},#state{ets=Ets}) ->
 handle_message({unsubscribed,RequestId},#state{ets=Ets}) ->
   [#ref{method=unsubscribe,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
   ets:delete(Ets,RequestId),
-  SubscriptionId = lists:keyfind(sub_id,1,Args),
+  SubscriptionId = maps:get(sub_id,Args),
   ets:delete(Ets,SubscriptionId),
   gen_server:reply(From,ok);
 
@@ -258,7 +257,7 @@ handle_message({event,SubscriptionId,_PublicationId,Details,Arguments,ArgumentsK
                 pid=Pid}] = ets:lookup(Ets,SubscriptionId),
   case Mfa of
     undefined ->
-      Pid ! {erwa,Msg};
+      Pid ! {awre,Msg};
     {M,F,S}  ->
       try
         erlang:apply(M,F,[Details,Arguments,ArgumentsKw,S])
@@ -275,7 +274,7 @@ handle_message({result,RequestId,Details,Arguments,ArgumentsKw},#state{ets=Ets})
 handle_message({registered,RequestId,RegistrationId},#state{ets=Ets}) ->
   [#ref{method=register,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
   ets:delete(Ets,RequestId),
-  {mfa,Mfa} = lists:keyfind(mfa,1,Args),
+  Mfa = maps:get(mfa,Args),
   {Pid,_} = From,
   ets:insert_new(Ets,#registration{id=RegistrationId,mfa=Mfa,pid=Pid}),
   gen_server:reply(From,{ok,RegistrationId});
@@ -283,7 +282,7 @@ handle_message({registered,RequestId,RegistrationId},#state{ets=Ets}) ->
 handle_message({unregistered,RequestId},#state{ets=Ets}) ->
   [#ref{method=unregister,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
   ets:delete(Ets,RequestId),
-  RegistrationId = lists:keyfind(reg_id,1,Args),
+  RegistrationId = maps:get(reg_id,Args),
   ets:delete(Ets,RegistrationId),
   gen_server:reply(From,ok);
 
@@ -294,7 +293,7 @@ handle_message({invocation,RequestId,RegistrationId,Details,Arguments,ArgumentsK
                 pid=Pid}] = ets:lookup(Ets,RegistrationId),
   case Mfa of
     undefined ->
-      Pid ! {erwa,Msg};
+      Pid ! {awre,Msg};
     {M,F,S}  ->
        try erlang:apply(M,F,[Details,Arguments,ArgumentsKw,S]) of
          {ok,Options,ResA,ResAKw} ->
@@ -302,9 +301,11 @@ handle_message({invocation,RequestId,RegistrationId,Details,Arguments,ArgumentsK
          {error,Details,Uri,Arguments,ArgumentsKw} ->
            ok = raw_send({error,invocation,RequestId,Details,Uri,Arguments,ArgumentsKw},State);
          Other ->
+           % here
            ok = raw_send({error,invocation,RequestId,[{<<"result">>,Other}],invalid_argument,undefined,undefined},State)
       catch
          Error:Reason ->
+           % here
            ok = raw_send({error,invocation,RequestId,[{<<"reason">>,io_lib:format("~p:~p",[Error,Reason])}],invalid_argument,undefined,undefined},State)
        end
   end;
@@ -331,6 +332,7 @@ close_connection(#state{socket=S}=State) ->
       ok = gen_tcp:close(S)
   end,
   self() ! terminate.
+
 
 
 

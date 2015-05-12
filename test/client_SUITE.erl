@@ -54,20 +54,18 @@ end_per_suite(Config) ->
 
 
 client_test(_) ->
-  {ok,Router} = erwa:get_router_for_realm(?REALM),
+  {ok,Routing} = erwa_realms:get_routing(?REALM),
   {ok,Pid} = gen_server:start(client_simple,?REALM,[]),
   EventUrl = client_simple:get_event_url(),
   RpcUrl = client_simple:get_rpc_url(),
-  io:format("starting client test (pid: ~p)~n",[self()]),
-  ok = erwa_router:handle_wamp(Router,{hello,?REALM,[{}]}),
-  ok =
-    receive
-      {erwa,{welcome,_SessionId,_Details}} -> ok
-     after 1000 ->
-       timeout
-    end,
-  ok = erwa_router:handle_wamp(Router,{publish,1,[{}],EventUrl,undefined,undefined}),
-  ok = erwa_router:handle_wamp(Router,{call,2,[{}],RpcUrl,[5,9],undefined}),
+  ct:log("starting client test (pid: ~p)~n",[self()]),
+  Session = erwa_session:set_id(234,erwa_session:create()),
+  {ok,Broker} = erwa_routing:get_broker(Routing),
+  {ok,Dealer} = erwa_routing:get_dealer(Routing),
+
+  erwa_broker:publish(),
+  ok = erwa_router:handle_wamp(Router,{publish,1,#{},EventUrl,undefined,undefined}),
+  ok = erwa_router:handle_wamp(Router,{call,2,#{},RpcUrl,[5,9],undefined}),
   ok =
     receive
       {erwa,{result,2,_,[14],_}} -> ok

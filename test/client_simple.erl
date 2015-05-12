@@ -48,8 +48,8 @@
 init(Realm) ->
   {ok,Con} = awre:start_client(),
   {ok,SessionId,_RouterDetails} = awre:connect(Con,Realm),
-  {ok,SubscriptionId} = awre:subscribe(Con,[{}],get_event_url()),
-  {ok,RegistrationId} = awre:register(Con,[{}],get_rpc_url()),
+  {ok,SubscriptionId} = awre:subscribe(Con,#{},get_event_url()),
+  {ok,RegistrationId} = awre:register(Con,#{},get_rpc_url()),
   {ok,#state{con=Con,session=SessionId,subscription=SubscriptionId,registration=RegistrationId}}.
 
 handle_call({all_done},_From,State) ->
@@ -59,11 +59,11 @@ handle_cast(_Msg,State) ->
   {noreply,State}.
 
 
-handle_info({erwa,{event,SubscriptionId,_PublicationId,_Details,_Arguments,_ArgumentsKw}},#state{subscription=SubscriptionId}=State) ->
+handle_info({awre,{event,SubscriptionId,_PublicationId,_Details,_Arguments,_ArgumentsKw}},#state{subscription=SubscriptionId}=State) ->
   {noreply,State#state{event_received=true}};
 
-handle_info({erwa,{invocation,RequestId,RegistrationId,_Details,[A,B],_ArgumentsKw}},#state{registration=RegistrationId,con=Con}=State) ->
-  ok = awre:yield(Con,RequestId,[{}],[A+B]),
+handle_info({awre,{invocation,RequestId,RegistrationId,_Details,[A,B],_ArgumentsKw}},#state{registration=RegistrationId,con=Con}=State) ->
+  ok = awre:yield(Con,RequestId,#{},[A+B]),
   ok = awre:stop_client(Con),
   {noreply,State#state{been_called=true,disconnected=true}};
 handle_info(Msg,State) ->
