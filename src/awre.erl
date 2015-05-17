@@ -71,13 +71,13 @@ stop_client(ConPid,Details,Reason) ->
 
 -spec stop_client(ConPid :: pid()) -> ok.
 stop_client(ConPid) ->
-  gen_server:cast(ConPid,{shutdown,#{},close_realm}).
+  gen_server:cast(ConPid,{shutdown,#{},goodbye_and_out}).
 
 %% @doc Connect to a router in the VM.
 %% The connection will be established to the local router in the VM.
 -spec connect(ConPid :: pid(), Realm :: binary()) -> {ok,SessionId :: non_neg_integer() ,RouterDetails :: list()}.
 connect(ConPid,Realm) ->
-  gen_server:call(ConPid,{connect,undefined,undefined,Realm,undefined}).
+  gen_server:call(ConPid,{awre_call,{connect,undefined,undefined,Realm,undefined}}).
 
 %% @doc connect to a remote router.
 %% Connect to the router at the given host Host on port Port to the realm Realm.
@@ -85,7 +85,7 @@ connect(ConPid,Realm) ->
 %% The connection wil be a direct TCP connection, there is no support for websocket connections.
 -spec connect(ConPid :: pid(), Host :: string(), Port :: non_neg_integer(), Realm :: binary(), Encoding :: raw_json | raw_msgpack) -> {ok,SessionId :: non_neg_integer() ,RouterDetails :: list()}.
 connect(ConPid,Host,Port,Realm,Encoding) ->
-  gen_server:call(ConPid,{connect,Host,Port,Realm,Encoding}).
+  gen_server:call(ConPid,{awre_call,{connect,Host,Port,Realm,Encoding}}).
 
 
 
@@ -96,7 +96,7 @@ connect(ConPid,Host,Port,Realm,Encoding) ->
 %% the last Argument will be the one from the Mfa, given at subscription time.
 -spec subscribe(ConPid :: pid(), Options :: list(), Topic :: binary(), Mfa :: {atom,atom,any()} | undefined) -> {ok,SubscriptionId :: non_neg_integer()}.
 subscribe(ConPid,Options,Topic,Mfa) ->
-  gen_server:call(ConPid,{subscribe,Options,Topic,Mfa}).
+  gen_server:call(ConPid,{awre_call,{subscribe,Options,Topic,Mfa}}).
 
 
 %% @doc Subscribe to an event.
@@ -108,7 +108,7 @@ subscribe(ConPid,Options,Topic) ->
 %% @doc Unsubscribe from an event.
 -spec unsubscribe(ConPid :: pid(), SubscriptionId :: non_neg_integer()) -> ok.
 unsubscribe(ConPid,SubscriptionId) ->
-  gen_server:call(ConPid,{unsubscribe,SubscriptionId}).
+  gen_server:call(ConPid,{awre_call,{unsubscribe,SubscriptionId}}).
 
 %% @doc Publish an event.
 -spec publish(ConPid :: pid(), Options :: list(), Topic :: binary()) -> ok.
@@ -123,7 +123,7 @@ publish(ConPid,Options,Topic,Arguments)->
 %% @doc Publish an event.
 -spec publish(ConPid :: pid(), Options :: list(), Topic :: binary(), Arguments :: list() | undefined, ArgumentsKw :: list() | undefined) -> ok.
 publish(ConPid,Options,Topic,Arguments,ArgumentsKw) ->
-  gen_server:call(ConPid,{publish,Options,Topic,Arguments,ArgumentsKw}).
+  gen_server:call(ConPid,{awre_call,{publish,Options,Topic,Arguments,ArgumentsKw}}).
 
 %% @doc Register a remote procedure.
 -spec register(ConPid :: pid(), Options :: list(), Procedure :: binary()) -> {ok, RegistrationId :: non_neg_integer() }.
@@ -133,12 +133,12 @@ register(ConPid,Options,Procedure) ->
 %% @doc Register a remote procedure.
 -spec register(ConPid :: pid(), Options :: list(), Procedure :: binary(), Mfa :: {atom,atom,any()}|undefined) -> {ok, RegistrationId :: non_neg_integer() }.
 register(ConPid,Options,Procedure,Mfa) ->
-  gen_server:call(ConPid,{register,Options,Procedure,Mfa}).
+  gen_server:call(ConPid,{awre_call,{register,Options,Procedure,Mfa}}).
 
 %% @doc Unregister a remote procedure.
 -spec unregister(ConPid :: pid(), RegistrationId :: non_neg_integer()) -> ok.
 unregister(ConPid,RegistrationId) ->
-  gen_server:call(ConPid,{unregister, RegistrationId}).
+  gen_server:call(ConPid,{awre_call,{unregister, RegistrationId}}).
 
 
 %% @doc Call a remote procedure.
@@ -154,7 +154,7 @@ call(ConPid,Options,ProcedureUrl,Arguments) ->
 %% @doc Call a remote procedure.
 -spec call(ConPid :: pid(), Options :: list(), ProcedureUrl :: binary(), Arguments::list() | undefined , ArgumentsKw :: list() | undefined) -> {ok, Details :: list(), ResA :: list() | undefined, ResAKw :: list() | undefined}.
 call(ConPid,Options,ProcedureUrl,Arguments,ArgumentsKw) ->
-  gen_server:call(ConPid,{call,Options,ProcedureUrl,Arguments,ArgumentsKw}).
+  gen_server:call(ConPid,{awre_call,{call,Options,ProcedureUrl,Arguments,ArgumentsKw}}).
 
 
 %% @doc Return the result to a call.
@@ -170,7 +170,7 @@ yield(ConPid,RequestId,Details,Arguments) ->
 %% @doc Return the result to a call.
 -spec yield(ConPid :: pid(), RequestId :: non_neg_integer(), Details :: list(), Arguments :: list() | undefined, ArgumentsKw :: list() | undefined ) -> ok.
 yield(ConPid,RequestId,Details,Arguments,ArgumentsKw) ->
-  gen_server:call(ConPid,{yield,RequestId,Details,Arguments,ArgumentsKw}).
+  gen_server:call(ConPid,{awre_call,{yield,RequestId,Details,Arguments,ArgumentsKw}}).
 
 %% @doc Return an error from a call.
 error(ConPid,RequestId,ErrorType,Reason,ErrorUri) ->
@@ -178,4 +178,4 @@ error(ConPid,RequestId,ErrorType,Reason,ErrorUri) ->
   StackTraceStr = iolist_to_binary(io_lib:format("~p", [erlang:get_stacktrace()])),
   ArgsKw = #{<<"reason">> => ReasonStr,
             <<"stacktrace">> => StackTraceStr},
-  gen_server:call(ConPid, {error,invocation,RequestId,ArgsKw,ErrorUri}).
+  gen_server:call(ConPid, {awre_call,{error,invocation,RequestId,ArgsKw,ErrorUri}}).

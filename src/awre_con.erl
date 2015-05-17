@@ -24,6 +24,10 @@
 -module(awre_con).
 -behaviour(gen_server).
 
+
+-export([send_to_client/2]).
+-export([close_connection/1]).
+
 %% API.
 -export([start_link/1]).
 
@@ -35,8 +39,6 @@
 -export([terminate/2]).
 -export([code_change/3]).
 
-
--define(DEFAULT_PORT,5555).
 -define(CLIENT_DETAILS, #{
                           callee => #{features => #{}},
                           caller => #{features => #{}},
@@ -44,25 +46,27 @@
                           subscriber => #{features => #{}}
                           }).
 
-
 -record(state,{
-    version = undefined,
-    realm = unknown,
-    router=undefined,
-    socket=undefined,
-    buffer = <<"">>,
-    sess = undefined,
-    ets = undefined,
-    enc = undefined,
-    max_length = undefined,
-    goodbye_sent = false
+               ets = undefined,
+               goodbye_sent = false,
+
+               transport = {none,none},
+
+               subscribe_id=1,
+               unsubscribe_id=1,
+               publish_id=1,
+               register_id=1,
+               unregister_id=1,
+               call_id=1
+
   }).
 
 -record(ref, {
-  req = undefined,
-  method = undefined,
-  ref=undefined,
-  args = []
+              key = {none,none},
+              req = undefined,
+              method = undefined,
+              ref=undefined,
+              args = []
               }).
 
 -record(subscription,{
@@ -76,126 +80,62 @@
   pid = undefined
                       }).
 
-%-record(call,{
-%  id = undefined,
-%  mfa = undefined}).
 
-
-
+-spec start_link(Args :: map()) -> {ok, pid()}.
 start_link(Args) ->
   gen_server:start_link(?MODULE, Args, []).
 
 
 
--spec init(Params :: list() ) -> {ok,#state{}}.
-init([]) ->
-  Ets = ets:new(con_data,[bag,protected,{keypos,2}]),
-  Version = awre:get_version(),
-  {ok,#state{ets=Ets,version=Version}}.
+-spec init(Args :: map() ) -> {ok,#state{}}.
+init(_Args) ->
+  Ets = ets:new(con_data,[set,protected,{keypos,2}]),
+  {ok,#state{ets=Ets}}.
 
+
+-spec send_to_client(Msg :: term(), Pid :: pid()) -> ok.
+send_to_client(Msg,Pid) ->
+  gen_server:cast(Pid,{awre_out,Msg}).
+
+
+close_connection(Pid) ->
+  gen_server:cast(Pid,terminate).
 
 
 -spec handle_call(Msg :: term(), From :: term(), #state{}) -> {reply,Msg :: term(), #state{}}.
-handle_call({connect,Host,Port,Realm,Encoding},From,#state{ets=Ets,version=Version}=State) ->
-  Enc = case Encoding of
-          json -> raw_json;
-          raw_json -> raw_json;
-          msgpack -> raw_msgpack;
-          _ -> raw_msgpack
-        end,
-  {R,S} =
-    case Host of
-      undefined ->
-        {ok, Router} =  erwa:get_router_for_realm(Realm),
-        ok = raw_send({hello,Realm,#{agent => Version, erwa => #{source => node,peer => local},roles => ?CLIENT_DETAILS}},State#state{socket=undefined,router=Router}),
-        {Router,undefined};
-      _ ->
-        {ok, Socket} = gen_tcp:connect(Host,Port,[binary,{packet,0}]),
-        % need to send the new TCP packet
-        SerNum = case Enc of
-                   raw_json -> 1;
-                   raw_msgpack -> 2;
-                   _ -> 0
-                 end,
-        MaxLen = 15,
-        ok = gen_tcp:send(Socket,<<127,MaxLen:4,SerNum:4,0,0>>),
-        {undefined,Socket}
-    end,
-  State1 = State#state{enc=Enc,router=R,socket=S,realm=Realm},
-  true = ets:insert_new(Ets,#ref{req=hello,method=hello,ref=From}),
-  {noreply,State1};
-
-handle_call({subscribe,Options,Topic,Mfa},From,State) ->
-  send({subscribe,request_id,Options,Topic},From,#{mfa => Mfa},State),
-  {noreply,State};
-
-handle_call({unsubscribe,SubscriptionId},From,State) ->
-  send({unsubscribe,request_id,SubscriptionId},From,#{sub_id=>SubscriptionId},State),
-  {noreply,State};
-
-handle_call({publish,Options,Topic,Arguments,ArgumentsKw},From,State) ->
-  send({publish,request_id,Options,Topic,Arguments,ArgumentsKw},From,#{},State),
-  {reply,ok,State};
-
-handle_call({register,Options,Procedure,Mfa},From,State) ->
-  send({register,request_id,Options,Procedure},From,#{mfa=>Mfa},State),
-  {noreply,State};
-
-handle_call({unregister,RegistrationId},From,State) ->
-  send({unregister,request_id,RegistrationId},From,#{reg_id => RegistrationId},State),
-  {noreply,State};
-
-handle_call({call,Options,Procedure,Arguments,ArgumentsKw},From,State) ->
-  ok = send({call,request_id,Options,Procedure,Arguments,ArgumentsKw},From,#{},State),
-  {noreply,State};
-
-handle_call({yield,_,_,_,_}=Msg,_From,State) ->
-  ok = raw_send(Msg,State),
-  {reply,ok,State};
-
-handle_call({error,invocation,RequestId,ArgsKw,ErrorUri},_From,State) ->
-    ok = raw_send({error,invocation,RequestId,#{},ErrorUri,[],ArgsKw},State),
-    {reply,ok,State};
-
+handle_call({awre_call,Msg},From,State) ->
+  handle_message_from_client(Msg,From,State);
 handle_call(_Msg,_From,State) ->
   {noreply,State}.
 
 
-handle_cast({shutdown,Details,Reason}, #state{goodbye_sent=GS}=State) ->
-  case GS of
-    true ->
-      ok;
-    false ->
-      ok = raw_send({goodbye,Details,Reason},State)
-  end,
-  {noreply,State#state{goodbye_sent=true}};
+handle_cast({awre_out,Msg}, State) ->
+  {ok,NewState} = handle_message_from_router(Msg,State),
+  {noreply,NewState};
+handle_cast({shutdown,Details,Reason}, #state{goodbye_sent=GS,transport= {TMod,TState}}=State) ->
+  NewState = case GS of
+               true ->
+                 State;
+               false ->
+                 {ok,NewTState} = TMod:send_to_router({goodbye,Details,Reason},TState),
+                 State#state{transport={TMod,NewTState}}
+             end,
+  {noreply,NewState#state{goodbye_sent=true}};
+
+handle_cast(terminate,#state{transport={TMod,TState}} = State) ->
+  ok = TMod:shutdown(TState),
+  {stop,normal,State};
 
 handle_cast(_Request, State) ->
 	{noreply, State}.
 
 
-handle_info({tcp,Socket,<<127,L:4,S:4,0,0>>},#state{socket=Socket,enc=Enc,realm=Realm,version=Version}=State) ->
-  %% the new reply
-  true =
-    case {Enc,S} of
-      {raw_json,1} -> true;
-      {raw_msgpack,2} -> true;
-      _ -> false
-    end,
-  State1 = State#state{max_length=math:pow(2,9+L)},
-  ok = raw_send({hello,Realm,#{agent=>Version, roles => ?CLIENT_DETAILS}},State1),
-  {noreply,State1};
-handle_info({tcp,Socket,Data},#state{buffer=Buffer,socket=Socket,enc=Enc}=State) ->
-  {Messages,NewBuffer} = wamper_protocol:deserialize(<<Buffer/binary, Data/binary>>,Enc),
-  handle_messages(Messages,State),
-  {noreply,State#state{buffer=NewBuffer}};
-handle_info(terminate,State) ->
-  {stop,normal,State};
-handle_info({erwa,shutdown}, State) ->
-  {stop,normal,State};
-handle_info({erwa,Msg}, State) ->
-  handle_message(Msg,State),
-	{noreply, State};
+
+
+
+handle_info(Data,#state{transport = {T,TState}} = State) ->
+  {ok,NewTState} = T:handle_info(Data,TState),
+  {noreply,State#state{transport={T,NewTState}}};
 handle_info(_Info, State) ->
 	{noreply, State}.
 
@@ -206,57 +146,97 @@ code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
 
+-spec handle_message_from_client(Msg :: term(), From :: term(), State :: #state{}) ->
+  {noreply, #state{}} | {reply, Result :: term(), #state{}}.
+handle_message_from_client({connect,Host,Port,Realm,Encoding}=Msg,From,
+                           #state{transport={T,_}}=State) ->
 
-handle_messages([],_State) ->
-  ok;
-handle_messages([Message|Messages],State) ->
-  handle_message(Message,State),
-  handle_messages(Messages,State).
+  Args = #{awre_con => self(), host => Host, port => Port, realm => Realm, enc => Encoding,
+           version => awre:get_version(), client_details => ?CLIENT_DETAILS},
+  {Trans,TState} = case T of
+                         none ->
+                           awre_transport:init(Args);
+                         T ->
+                           NewTState = T:init(Args),
+                           {T,NewTState}
+                       end,
+  {_,NewState} = create_ref_for_message(Msg,From,#{},State),
+  {noreply,NewState#state{transport={Trans,TState}}};
+handle_message_from_client({subscribe,Options,Topic,Mfa},From,State) ->
+  {ok,NewState} = send_and_ref({subscribe,request_id,Options,Topic},From,#{mfa => Mfa},State),
+  {noreply,NewState};
+handle_message_from_client({unsubscribe,SubscriptionId},From,State) ->
+  {ok,NewState} = send_and_ref({unsubscribe,request_id,SubscriptionId},From,#{sub_id=>SubscriptionId},State),
+  {noreply,NewState};
+handle_message_from_client({publish,Options,Topic,Arguments,ArgumentsKw},From,State) ->
+  {ok,NewState} = send_and_ref({publish,request_id,Options,Topic,Arguments,ArgumentsKw},From,#{},State),
+  {reply,ok,NewState};
+handle_message_from_client({register,Options,Procedure,Mfa},From,State) ->
+  {ok,NewState} = send_and_ref({register,request_id,Options,Procedure},From,#{mfa=>Mfa},State),
+  {noreply,NewState};
+handle_message_from_client({unregister,RegistrationId},From,State) ->
+  {ok,NewState} = send_and_ref({unregister,request_id,RegistrationId},From,#{reg_id => RegistrationId},State),
+  {noreply,NewState};
+handle_message_from_client({call,Options,Procedure,Arguments,ArgumentsKw},From,State) ->
+  {ok,NewState} = send_and_ref({call,request_id,Options,Procedure,Arguments,ArgumentsKw},From,#{},State),
+  {noreply,NewState};
+handle_message_from_client({yield,_,_,_,_}=Msg,_From,State) ->
+  {ok,NewState} = send_to_router(Msg,State),
+  {reply,ok,NewState};
+handle_message_from_client({error,invocation,RequestId,ArgsKw,ErrorUri},_From,State) ->
+  {ok,NewState} = send_to_router({error,invocation,RequestId,#{},ErrorUri,[],ArgsKw},State),
+  {reply,ok,NewState};
+handle_message_from_client(_Msg,_From,State) ->
+  {noreply,State}.
 
 
 
-handle_message({welcome,SessionId,RouterDetails},#state{ets=Ets}) ->
-  [#ref{method=hello,ref=From}] = ets:lookup(Ets,hello),
-  ets:delete(Ets,welcome),
-  gen_server:reply(From,{ok,SessionId,RouterDetails});
 
-%handle_message({abort,},#state{ets=Ets}) ->
+handle_message_from_router({welcome,SessionId,RouterDetails},State) ->
+  {From,_} = get_ref(hello,hello,State),
+  gen_server:reply(From,{ok,SessionId,RouterDetails}),
+  {ok,State};
 
-handle_message({goodbye,_Details,_Reason},#state{goodbye_sent=GS}=State) ->
-  case GS of
-    true ->
-      ok;
-    false ->
-      raw_send({goodbye,[],goodbye_and_out},State)
-  end,
-  close_connection(State);
+%handle_message_from_router({abort,},#state{ets=Ets}) ->
 
-%handle_message({error,},#state{ets=Ets}) ->
+handle_message_from_router({goodbye,_Details,_Reason},#state{goodbye_sent=GS}=State) ->
+  NewState = case GS of
+               true ->
+                 State;
+               false ->
+                 {ok,NState} = send_to_router({goodbye,[],goodbye_and_out},State),
+                 NState
+             end,
+  close_connection(),
+  {ok,NewState};
 
-%handle_message({published,},#state{ets=Ets}) ->
+%handle_message_from_router({error,},#state{ets=Ets}) ->
 
-handle_message({subscribed,RequestId,SubscriptionId},#state{ets=Ets}) ->
-  [#ref{method=subscribe,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
-  ets:delete(Ets,RequestId),
+%handle_message_from_router({published,},#state{ets=Ets}) ->
+
+handle_message_from_router({subscribed,RequestId,SubscriptionId},#state{ets=Ets}=State) ->
+  {From,Args} = get_ref(RequestId,subscribe,State),
   Mfa = maps:get(mfa,Args),
   {Pid,_} = From,
   ets:insert_new(Ets,#subscription{id=SubscriptionId,mfa=Mfa,pid=Pid}),
-  gen_server:reply(From,{ok,SubscriptionId});
+  gen_server:reply(From,{ok,SubscriptionId}),
+  {ok,State};
 
-handle_message({unsubscribed,RequestId},#state{ets=Ets}) ->
-  [#ref{method=unsubscribe,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
-  ets:delete(Ets,RequestId),
+handle_message_from_router({unsubscribed,RequestId},#state{ets=Ets}=State) ->
+  {From,Args} = get_ref(RequestId,unsubscribe,State),
   SubscriptionId = maps:get(sub_id,Args),
   ets:delete(Ets,SubscriptionId),
-  gen_server:reply(From,ok);
+  gen_server:reply(From,ok),
+  {ok,State};
 
-handle_message({event,SubscriptionId,_PublicationId,Details,Arguments,ArgumentsKw}=Msg,#state{ets=Ets}) ->
+handle_message_from_router({event,SubscriptionId,_PublicationId,Details,Arguments,ArgumentsKw}=Msg,#state{ets=Ets}=State) ->
   [#subscription{
                 id = SubscriptionId,
                 mfa = Mfa,
                 pid=Pid}] = ets:lookup(Ets,SubscriptionId),
   case Mfa of
     undefined ->
+      % send it to user process
       Pid ! {awre,Msg};
     {M,F,S}  ->
       try
@@ -265,117 +245,141 @@ handle_message({event,SubscriptionId,_PublicationId,Details,Arguments,ArgumentsK
         Error:Reason ->
           io:format("error ~p:~p with event: ~n~p~n",[Error,Reason,erlang:get_stacktrace()])
       end
-  end;
-handle_message({result,RequestId,Details,Arguments,ArgumentsKw},#state{ets=Ets}) ->
-  [#ref{method=call,ref=From}] = ets:lookup(Ets,RequestId),
-  ets:delete(Ets,RequestId),
-  gen_server:reply(From,{ok,Details,Arguments,ArgumentsKw});
+  end,
+  {ok,State};
+handle_message_from_router({result,RequestId,Details,Arguments,ArgumentsKw},State) ->
+  {From,_} = get_ref(RequestId,call,State),
+  gen_server:reply(From,{ok,Details,Arguments,ArgumentsKw}),
+  {ok,State};
 
-handle_message({registered,RequestId,RegistrationId},#state{ets=Ets}) ->
-  [#ref{method=register,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
-  ets:delete(Ets,RequestId),
+handle_message_from_router({registered,RequestId,RegistrationId},#state{ets=Ets}=State) ->
+  {From,Args} = get_ref(RequestId,register,State),
   Mfa = maps:get(mfa,Args),
   {Pid,_} = From,
   ets:insert_new(Ets,#registration{id=RegistrationId,mfa=Mfa,pid=Pid}),
-  gen_server:reply(From,{ok,RegistrationId});
+  gen_server:reply(From,{ok,RegistrationId}),
+  {ok,State};
 
-handle_message({unregistered,RequestId},#state{ets=Ets}) ->
-  [#ref{method=unregister,ref=From,args=Args}] = ets:lookup(Ets,RequestId),
-  ets:delete(Ets,RequestId),
+handle_message_from_router({unregistered,RequestId},#state{ets=Ets}=State) ->
+  {From,Args} = get_ref(RequestId,unregister,State),
   RegistrationId = maps:get(reg_id,Args),
   ets:delete(Ets,RegistrationId),
-  gen_server:reply(From,ok);
+  gen_server:reply(From,ok),
+  {ok,State};
 
-handle_message({invocation,RequestId,RegistrationId,Details,Arguments,ArgumentsKw}=Msg,#state{ets=Ets}=State) ->
+handle_message_from_router({invocation,RequestId,RegistrationId,Details,Arguments,ArgumentsKw}=Msg,#state{ets=Ets}=State) ->
   [#registration{
                 id = RegistrationId,
                 mfa = Mfa,
                 pid=Pid}] = ets:lookup(Ets,RegistrationId),
-  case Mfa of
-    undefined ->
-      Pid ! {awre,Msg};
-    {M,F,S}  ->
-       try erlang:apply(M,F,[Details,Arguments,ArgumentsKw,S]) of
-         {ok,Options,ResA,ResAKw} ->
-           ok = raw_send({yield,RequestId,Options,ResA,ResAKw},State);
-         {error,Details,Uri,Arguments,ArgumentsKw} ->
-           ok = raw_send({error,invocation,RequestId,Details,Uri,Arguments,ArgumentsKw},State);
-         Other ->
-           % here
-           ok = raw_send({error,invocation,RequestId,[{<<"result">>,Other}],invalid_argument,undefined,undefined},State)
-      catch
-         Error:Reason ->
-           % here
-           ok = raw_send({error,invocation,RequestId,[{<<"reason">>,io_lib:format("~p:~p",[Error,Reason])}],invalid_argument,undefined,undefined},State)
-       end
-  end;
+  NewState = case Mfa of
+               undefined ->
+                 % send it to the user process
+                 Pid ! {awre,Msg},
+                 State;
+               {M,F,S}  ->
+                 try erlang:apply(M,F,[Details,Arguments,ArgumentsKw,S]) of
+                   {ok,Options,ResA,ResAKw} ->
+                     {ok,NState} = send_to_router({yield,RequestId,Options,ResA,ResAKw},State),
+                     NState;
+                   {error,Details,Uri,Arguments,ArgumentsKw} ->
+                     {ok,NState} = send_to_router({error,invocation,RequestId,Details,Uri,Arguments,ArgumentsKw},State),
+                     NState;
+                   Other ->
+                     {ok,NState} = send_to_router({error,invocation,RequestId,#{<<"result">> => Other },invalid_argument,undefined,undefined},State),
+                     NState
+                 catch
+                   Error:Reason ->
+                     {ok,NState} = send_to_router({error,invocation,RequestId,#{<<"reason">> => io_lib:format("~p:~p",[Error,Reason])},invalid_argument,undefined,undefined},State),
+                     NState
+                 end
+             end,
+  {ok,NewState};
 
-handle_message({error,call,RequestId,Details,Error,Arguments,ArgumentsKw},#state{ets=Ets}) ->
-  [#ref{method=call,ref=From}] = ets:lookup(Ets,RequestId),
-  ets:delete(Ets,RequestId),
-  gen_server:reply(From,{error,Details,Error,Arguments,ArgumentsKw});
+handle_message_from_router({error,call,RequestId,Details,Error,Arguments,ArgumentsKw},State) ->
+  {From,_} = get_ref(RequestId,register,State),
+  gen_server:reply(From,{error,Details,Error,Arguments,ArgumentsKw}),
+  {ok,State};
 
-handle_message(Msg,_State) ->
-  io:format("unhandled message ~p~n",[Msg]).
+handle_message_from_router(Msg,State) ->
+  io:format("unhandled message ~p~n",[Msg]),
+  {ok,State}.
 
+%
+% Session Scope IDs
+%
+%     ERROR.Request
+%     PUBLISH.Request
+%     PUBLISHED.Request
+%     SUBSCRIBE.Request
+%     SUBSCRIBED.Request
+%     UNSUBSCRIBE.Request
+%     UNSUBSCRIBED.Request
+%     CALL.Request
+%     CANCEL.Request
+%     RESULT.Request
+%     REGISTER.Request
+%     REGISTERED.Request
+%     UNREGISTER.Request
+%     UNREGISTERED.Request
+%     INVOCATION.Request
+%     INTERRUPT.Request
+%     YIELD.Request
+%
+% IDs in the session scope SHOULD be incremented by 1 beginning with 1
+% (for each direction - Client-to-Router and Router-to-Client)
+%
 
+send_and_ref(Msg,From,Args,State) ->
+  {Message,NewState} = create_ref_for_message(Msg,From,Args,State),
+  send_to_router(Message,NewState).
 
+send_to_router(Msg,#state{transport={TMod,TState}} = State) ->
+  {ok,NewTState} = TMod:send_to_router(Msg,TState),
+  {ok,State#state{transport={TMod,NewTState}}}.
 
-
-
-
-close_connection(#state{socket=S}=State) ->
-  case destination(State) of
-    local ->
-      ok;
-    remote ->
-      ok = gen_tcp:close(S)
-  end,
-  self() ! terminate.
-
-
-
-
-send(Msg,From,Args,#state{ets=Ets}=State) ->
-  RequestId = gen_id(State),
-  Message = setelement(2,Msg,RequestId),
-  Method = element(1,Message),
-  true = ets:insert_new(Ets,#ref{req=RequestId,method=Method,ref=From,args=Args}),
-  raw_send(Message,State).
-
-
-raw_send(Message,#state{router=R,socket=S,enc=Enc,max_length=MaxLength}=State) ->
-  case destination(State) of
-    local ->
-      ok = erwa_router:handle_wamp(R,Message);
-    remote ->
-      SerMessage = wamper_protocol:serialize(Message,Enc),
-      case byte_size(SerMessage) > MaxLength of
-        true ->
-          ok;
-        false ->
-          ok = gen_tcp:send(S,SerMessage)
-      end
+create_ref_for_message(Msg,From,Args,#state{ets=Ets}=State)  ->
+  Method = case element(1,Msg) of
+             connect -> hello;
+             El -> El
+           end,
+  {RequestId,NewState} = case Method of
+                           hello ->
+                             {hello,State};
+                           subscribe ->
+                             Id = State#state.subscribe_id,
+                             {Id,State#state{subscribe_id = Id+1}};
+                           unsubscribe ->
+                             Id = State#state.unsubscribe_id,
+                             {Id,State#state{unsubscribe_id = Id+1}};
+                           publish ->
+                             Id = State#state.publish_id,
+                             {Id,State#state{publish_id = Id+1}};
+                           register ->
+                             Id = State#state.register_id,
+                             {Id,State#state{register_id = Id+1}};
+                           unregister ->
+                             Id = State#state.unregister_id,
+                             {Id,State#state{unregister_id = Id+1}};
+                           call ->
+                             Id = State#state.call_id,
+                             {Id,State#state{call_id = Id+1}}
+                         end,
+  true = ets:insert_new(Ets,#ref{key={Method,RequestId},ref=From,args=Args}),
+  case is_integer(RequestId) of
+    true ->
+      {setelement(2,Msg,RequestId),NewState};
+    false ->
+      {Msg,NewState}
   end.
 
--spec destination(#state{}) -> local | remote.
-destination(#state{socket=S}) ->
-  case S of
-    undefined ->
-      local;
-    _ ->
-      remote
-  end.
-
--spec gen_id(#state{}) -> non_neg_integer().
-gen_id(#state{ets=Ets}=State) ->
-  Id = crypto:rand_uniform(0,9007199254740992),
-  case ets:lookup(Ets,Id) of
-    [] ->
-      Id;
-    _ ->
-      gen_id(State)
-  end.
 
 
+get_ref(ReqId,Method,#state{ets=Ets}) ->
+  Key = {Method,ReqId},
+  [#ref{ref=From,args=Args}] = ets:lookup(Ets,Key),
+  ets:delete(Ets,Key),
+  {From,Args}.
 
+close_connection() ->
+  gen_server:cast(self(),terminate).
