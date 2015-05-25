@@ -33,6 +33,7 @@
                awre_con = unknown,
                socket = none,
                enc = unknown,
+               sernum = unknown,
                realm = none,
                version = unknown,
                client_details = unknown,
@@ -50,16 +51,24 @@ init(#{realm := Realm, awre_con := Con, client_details := CDetails, version := V
           raw_json -> raw_json;
           msgpack -> raw_msgpack;
           raw_msgpack -> raw_msgpack;
+          erlbin -> raw_erlbin;
+          raw_erlbin -> raw_erlbin;
           _ -> raw_msgpack
         end,
   SerNum = case Enc of
              raw_json -> 1;
              raw_msgpack -> 2;
+             raw_erlbin ->
+               EBinNumber = application:get_env(awre,erlbin_number,undefined),
+               case {is_integer(EBinNumber), EBinNumber > 0} of
+                 {true,true} -> EBinNumber;
+                 _ -> error("application parameter erlbin_number not set")
+               end;
              _ -> 0
            end,
   MaxLen = 15,
   ok = gen_tcp:send(Socket,<<127,MaxLen:4,SerNum:4,0,0>>),
-  {ok,#state{awre_con=Con, version = Version, client_details=CDetails, socket=Socket, enc=Enc, realm=Realm}}.
+  {ok,#state{awre_con=Con, version = Version, client_details=CDetails, socket=Socket, enc=Enc, sernum=SerNum, realm=Realm}}.
 
 send_to_router(Message,#state{socket=S, enc=Enc, out_max=MaxLength} = State) ->
   SerMessage = wamper_protocol:serialize(Message,Enc),
@@ -72,12 +81,8 @@ send_to_router(Message,#state{socket=S, enc=Enc, out_max=MaxLength} = State) ->
   {ok,State}.
 
 handle_info({tcp,Socket,<<127,L:4,S:4,0,0>>},
-            #state{socket=Socket,enc=Enc,realm=Realm, version=Version, client_details=CDetails}=State) ->
-  true = case {Enc,S} of
-           {raw_json,1} -> true;
-           {raw_msgpack,2} -> true;
-           _ -> false
-         end,
+            #state{socket=Socket,enc=Enc,realm=Realm,sernum=SerNum, version=Version, client_details=CDetails}=State) ->
+  S = SerNum,
   State1 = State#state{out_max=math:pow(2,9+L)},
   send_to_router({hello,Realm,#{agent=>Version, roles => CDetails}},State1);
 handle_info({tcp,Socket,Data},#state{buffer=Buffer,socket=Socket,enc=Enc}=State) ->
