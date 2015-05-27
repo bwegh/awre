@@ -80,6 +80,8 @@ handle_cast(_Msg,State) ->
 handle_info({awre,{event,SubscriptionId,_PublicationId,_Details,_Arguments,_ArgumentsKw}},#state{con=Con,subscription=SubscriptionId,remote_rpc=RPC}=State) ->
   ct:log("event at ~p~n",[?MODULE]),
   {ok,_Details,[4],_} = awre:call(Con,#{},RPC,[9,5]),
+  {error,Details,Error,Arguments,ArgumentsKw} = awre:call(Con,#{},<<"this.does.not.exist">>),
+  ct:log("got a call error: ~p with details ~p, Arguments:~p; ArgumentsKw:~p",[Error,Details,Arguments,ArgumentsKw]),
   ok = awre:unsubscribe(Con,SubscriptionId),
   {noreply,State#state{event_received=true}};
 
