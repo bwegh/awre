@@ -38,7 +38,8 @@
                version = unknown,
                client_details = unknown,
                buffer = <<"">>,
-               out_max = unknown
+               out_max = unknown,
+               handshake = in_progress
                }).
 
 
@@ -80,15 +81,18 @@ send_to_router(Message,#state{socket=S, enc=Enc, out_max=MaxLength} = State) ->
   end,
   {ok,State}.
 
-handle_info({tcp,Socket,<<127,L:4,S:4,0,0>>},
-            #state{socket=Socket,enc=Enc,realm=Realm,sernum=SerNum, version=Version, client_details=CDetails}=State) ->
-  S = SerNum,
-  State1 = State#state{out_max=math:pow(2,9+L)},
-  send_to_router({hello,Realm,#{agent=>Version, roles => CDetails}},State1);
-handle_info({tcp,Socket,Data},#state{buffer=Buffer,socket=Socket,enc=Enc}=State) ->
+handle_info({tcp,Socket,Data},#state{buffer=Buffer,socket=Socket,enc=Enc, handshake=done}=State) ->
   {Messages,NewBuffer} = wamper_protocol:deserialize(<<Buffer/binary, Data/binary>>,Enc),
   forward_messages(Messages,State),
   {ok,State#state{buffer=NewBuffer}};
+handle_info({tcp,Socket,<<127,0,0,0>>},#state{socket=Socket}=State) ->
+  forward_messages([{abort,#{},tcp_handshake_failed}],State),
+  {ok,State};
+handle_info({tcp,Socket,<<127,L:4,S:4,0,0>>},
+            #state{socket=Socket,realm=Realm,sernum=SerNum, version=Version, client_details=CDetails}=State) ->
+  S = SerNum,
+  State1 = State#state{out_max=math:pow(2,9+L), handshake=done},
+  send_to_router({hello,Realm,#{agent=>Version, roles => CDetails}},State1);
 handle_info(_Data,State) ->
   {ok,State}.
 
