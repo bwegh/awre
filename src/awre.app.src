@@ -21,7 +21,7 @@
 %%
 
 {application, awre, [
-	{id, "awre"},
+	{id, "git"},
 	{description, "a simple wamp client library"},
 	{vsn, "0.1.0"},
 	{modules, []},

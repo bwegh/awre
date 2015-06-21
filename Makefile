@@ -3,6 +3,8 @@ CT_SUITES = roundtrip
 CT_OPTS = -cover test/cover.spec
 ERLC_OPTS = +debug_info
 
+COMPILE_FIRST = awre_transport.erl
+
 DEPS = wamper
 dep_wamper = git https://github.com/bwegh/wamper master
 
