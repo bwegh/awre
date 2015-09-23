@@ -39,12 +39,12 @@
 
 init(Args) ->
   #{realm := Realm, awre_con := Con, client_details := CDetails, version := Version} = Args,
-  Session = erwa_session:set_source(local,erwa_session:create()),
+  Session = erwa_routing:set_source(local,erwa_routing:create()),
   State = #state{session=Session,awre_con=Con, version = Version, client_details=CDetails},
   send_to_router({hello,Realm,#{version => Version, roles => CDetails}},State).
 
 send_to_router(MsgToRouter, #state{session=Session,awre_con=Con} = State) ->
-  case erwa_session:handle_message(MsgToRouter,Session) of
+  case erwa_routing:handle_message(MsgToRouter,Session) of
     {ok,NewSession} ->
       {ok,State#state{session=NewSession}};
     {stop,NewSession} ->
@@ -60,7 +60,7 @@ send_to_router(MsgToRouter, #state{session=Session,awre_con=Con} = State) ->
   end.
 
 handle_info({erwa,MsgFromRouter},#state{session=Session,awre_con=Con}=State) ->
-  case erwa_session:handle_info(MsgFromRouter,Session) of
+  case erwa_routing:handle_info(MsgFromRouter,Session) of
     {ok,NewSession} ->
       {ok,State#state{session=NewSession}};
     {stop,NewSession} ->
